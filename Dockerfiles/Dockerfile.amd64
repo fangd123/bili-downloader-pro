@@ -20,20 +20,20 @@ RUN apk update && \
 # 设置 pip 镜像源并安装 Python 包
 RUN pip config set global.index-url http://mirrors.aliyun.com/pypi/simple/ && \
     pip config set global.trusted-host mirrors.aliyun.com && \
-    pip install --no-cache-dir openpyxl loguru
+    pip install --no-cache-dir openpyxl loguru schedule
 
 # 设置工作目录
 WORKDIR /app
 
 # 下载最新版本的BBDown
-RUN wget -q  https://ghproxy.net/https://github.com/nilaoda/BBDown/releases/download/1.6.3/BBDown_1.6.3_20240814_linux-amd64.zip && \
-    unzip BBDown_1.6.3_20240814_linux-amd64.zip  && \
-    rm BBDown_1.6.3_20240814_linux-arm64.zip && \
+RUN wget -q  https://ghproxy.net/https://github.com/nilaoda/BBDown/releases/download/1.6.3/BBDown_1.6.3_20240814_linux-x64.zip && \
+    unzip BBDown_1.6.3_20240814_linux-x64.zip  && \
+    rm BBDown_1.6.3_20240814_linux-x64.zip && \
     chmod +x BBDown && \
     mv BBDown /usr/local/bin/
 
 # 设置容器启动命令
-# ENTRYPOINT ["BBDown", "serve", "-l", "http://0.0.0.0:12450"]
+ENTRYPOINT ["python", "main.py"]
 
 # 暴露端口
 # EXPOSE 12450

@@ -6,6 +6,7 @@ from loguru import logger
 #import resend
 from pathlib import Path
 import time
+import schedule
 
 # 配置日志
 log_path = "logs"
@@ -27,6 +28,7 @@ class BilibiliDownloader:
         self.failed_videos = []
         self.total_videos = 0
         self.success_count = 0
+        self.timeout_seconds = 600  # 10分钟超时
 
         # 创建失败记录文件
         self.failed_file = f"failed_downloads_{self.start_time.strftime('%Y%m%d_%H%M%S')}.txt"
@@ -34,8 +36,8 @@ class BilibiliDownloader:
     def get_user_videos(self, uid, username):
         """获取用户的所有视频链接"""
         try:
-            cmd = f'BBDown --config-file BBDown.config https://space.bilibili.com/{uid}'
-            subprocess.run(cmd, shell=True, check=False)
+            cmd = f'BBDown --config-file /app/BBDown.config https://space.bilibili.com/{uid}'
+            subprocess.run(cmd, shell=True, check=False, timeout=self.timeout_seconds)
 
             # 检查是否生成了视频列表文件
             video_list_file = f"{username}的投稿视频.txt"
@@ -46,29 +48,40 @@ class BilibiliDownloader:
             with open(video_list_file, 'r', encoding='utf-8') as f:
                 return [line.strip() for line in f if line.strip()]
 
+        except subprocess.TimeoutExpired as e:
+            logger.error(f"Command timed out after {self.timeout_seconds} seconds for user {username} (UID: {uid})")
+            return []
         except subprocess.CalledProcessError as e:
             logger.error(f"Error getting videos for user {username} (UID: {uid}): {str(e)}")
             return []
 
-    def download_video_resources(self, url):
+    def download_video_resources(self, url,file_folder):
         """下载视频、字幕和弹幕"""
         try:
             # 下载音频
-            cmd_video = f'BBDown --audio-only --config-file BBDown.config {url}'
-            subprocess.run(cmd_video, shell=True, check=True)
+            cmd_video = f'BBDown --audio-only --config-file /app/BBDown.config {url} '
+            subprocess.run(cmd_video, shell=True, check=True, timeout=self.timeout_seconds)
+            
             # 下载视频
-            cmd_video = f'BBDown -aria2 --config-file BBDown.config {url}'
-            subprocess.run(cmd_video, shell=True, check=True)
+            cmd_video = f'BBDown -aria2 --config-file /app/BBDown.config {url} '
+            subprocess.run(cmd_video, shell=True, check=True, timeout=self.timeout_seconds)
 
             # 下载字幕
-            cmd_subtitle = f'BBDown --sub-only --skip-ai false --config-file BBDown.config {url}'
-            subprocess.run(cmd_subtitle, shell=True, check=True)
+            cmd_subtitle = f'BBDown --sub-only --skip-ai false --config-file /app/BBDown.config {url} '
+            subprocess.run(cmd_subtitle, shell=True, check=True, timeout=self.timeout_seconds)
 
             # 下载弹幕
-            cmd_danmaku = f'BBDown --danmaku-only -dd --cover-only --config-file BBDown.config {url}'
-            subprocess.run(cmd_danmaku, shell=True, check=True)
+            cmd_danmaku = f'BBDown --danmaku-only -dd --cover-only --config-file /app/BBDown.config {url} '
+            subprocess.run(cmd_danmaku, shell=True, check=True, timeout=self.timeout_seconds)
 
             return True
+            
+        except subprocess.TimeoutExpired as e:
+            logger.error(f"Command timed out after {self.timeout_seconds} seconds for URL {url}")
+            self.failed_videos.append(url)
+            with open(self.failed_file, 'a', encoding='utf-8') as f:
+                f.write(f"{url} (Timeout Error)\n")
+            return False
         except subprocess.CalledProcessError as e:
             logger.error(f"Error downloading resources for URL {url}: {str(e)}")
             self.failed_videos.append(url)
@@ -109,6 +122,7 @@ class BilibiliDownloader:
     def run(self):
         """运行下载任务"""
         try:
+            logger.info("Starting scheduled download task...")
             # 读取Excel文件
             workbook = openpyxl.load_workbook(self.excel_path)
             sheet = workbook.active
@@ -121,23 +135,45 @@ class BilibiliDownloader:
 
                 # 获取用户视频列表
                 videos = self.get_user_videos(uid, username)
+                file_folder = f"{uid}__{username}"
                 self.total_videos += len(videos)
-
+                os.chdir('/app/'+file_folder)
                 # 下载每个视频的资源
                 for video_url in videos:
                     logger.info(f"Downloading resources for video: {video_url}")
-                    if self.download_video_resources(video_url):
+                    if self.download_video_resources(video_url,file_folder):
                         self.success_count += 1
                     time.sleep(1)  # 添加延迟以避免请求过于频繁
 
             # 发送完成通知邮件
             # self.send_completion_email()
+            logger.info("Scheduled download task completed")
 
         except Exception as e:
             logger.error(f"An error occurred during execution: {str(e)}")
             raise
 
+def run_downloader():
+    """执行下载任务的包装函数"""
+    # 检查是否是每月4号
+    if datetime.now().day != 4:
+        return
+        
+    try:
+        downloader = BilibiliDownloader("list.xlsx")  # 替换为你的Excel文件路径
+        downloader.run()
+    except Exception as e:
+        logger.error(f"Error in scheduled task: {str(e)}")
 
 if __name__ == "__main__":
+    # # 设置定时任务：每月4日23:40（北京时间）执行
+    # schedule.every().day.at("15:45").do(run_downloader)
+    
+    # logger.info("Scheduler started. Waiting for scheduled time...")
+    
+    # # 保持程序运行
+    # while True:
+    #     schedule.run_pending()
+    #     time.sleep(60)  # 每分钟检查一次是否有待执行的任务
     downloader = BilibiliDownloader("list.xlsx")  # 替换为你的Excel文件路径
     downloader.run()
